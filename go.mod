@@ -1,4 +1,4 @@
-module github.com/dpcamargo/fullcycle-rate-limiter
+module github.com/dpcamargo/redis-rate-limiter-go
 
 go 1.23.3
 

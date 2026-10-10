@@ -59,7 +59,6 @@ func (r *RedisClient) GetCount(ctx context.Context, key string) (int, error) {
 			return 0, err
 		}
 	}
-	fmt.Printf("key: %s GetCount: %s\n", key, result)
 	val, err := strconv.Atoi(result)
 	if err != nil {
 		return 0, err

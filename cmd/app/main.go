@@ -8,9 +8,9 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 
-	"github.com/dpcamargo/fullcycle-rate-limiter/internal/database"
-	"github.com/dpcamargo/fullcycle-rate-limiter/internal/web/controller"
-	"github.com/dpcamargo/fullcycle-rate-limiter/internal/web/middleware"
+	"github.com/dpcamargo/redis-rate-limiter-go/internal/database"
+	"github.com/dpcamargo/redis-rate-limiter-go/internal/web/controller"
+	"github.com/dpcamargo/redis-rate-limiter-go/internal/web/middleware"
 	"github.com/labstack/echo/v4"
 )
 
@@ -21,6 +21,9 @@ type Config struct {
 	APILimit    int           `mapstructure:"API_LIMIT"`
 	APIDuration time.Duration `mapstructure:"API_DURATION"`
 	RedisAddr   string        `mapstructure:"REDIS_ADDR"`
+	// FailOpen selects the strategy applied when Redis is unreachable:
+	// false (default) = fail-closed, true = fail-open. See README.
+	FailOpen bool `mapstructure:"FAIL_OPEN"`
 }
 
 func main() {
@@ -39,6 +42,7 @@ func main() {
 	viper.BindEnv("API_LIMIT")
 	viper.BindEnv("API_DURATION")
 	viper.BindEnv("REDIS_ADDR")
+	viper.BindEnv("FAIL_OPEN")
 	err = viper.Unmarshal(&config)
 	if err != nil {
 		log.Fatalf("Error unmarshaling config: %v", err)
@@ -49,6 +53,7 @@ func main() {
 	rateLimitConf := middleware.NewRateLimiter(db)
 	rateLimitConf.AddTokenConf("ip", config.IPLimit, config.IPDuration)
 	rateLimitConf.AddTokenConf(config.APIKey, config.APILimit, config.APIDuration)
+	rateLimitConf.SetFailOpen(config.FailOpen)
 
 	e := echo.New()
 	e.Use(middleware.LoggingMiddleware)

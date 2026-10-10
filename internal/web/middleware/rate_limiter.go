@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dpcamargo/fullcycle-rate-limiter/internal/database"
+	"github.com/dpcamargo/redis-rate-limiter-go/internal/database"
 	"github.com/labstack/echo/v4"
 )
 
@@ -18,6 +18,13 @@ type RateLimiterConf struct {
 type RateLimiter struct {
 	db   database.DatabaseInterface
 	Conf map[string]RateLimiterConf
+	// FailOpen controls the behavior when the backing store (Redis) cannot be
+	// reached. false (default) = fail-closed: requests are rejected while the
+	// store is unavailable, protecting the upstream service at the cost of
+	// availability. true = fail-open: requests are allowed through
+	// unthrottled while the store is unavailable, trading rate-limit
+	// enforcement for availability. See README "Tradeoff Analysis".
+	FailOpen bool
 }
 
 func NewRateLimiter(db database.DatabaseInterface) *RateLimiter {
@@ -25,6 +32,12 @@ func NewRateLimiter(db database.DatabaseInterface) *RateLimiter {
 		db:   db,
 		Conf: map[string]RateLimiterConf{},
 	}
+}
+
+// SetFailOpen configures the fail-open/fail-closed strategy used when Redis
+// is unreachable or times out.
+func (r *RateLimiter) SetFailOpen(failOpen bool) {
+	r.FailOpen = failOpen
 }
 
 func (r *RateLimiter) AddTokenConf(token string, limit int, interval time.Duration) {
@@ -79,7 +92,11 @@ func RateLimiterMiddleware(ctx context.Context, rl *RateLimiter) echo.Middleware
 
 			ok, err := RateLimiterCore(ctx, rl, key, ip)
 			if err != nil {
-				fmt.Println("rate limit error. key: ", key)
+				if rl.FailOpen {
+					fmt.Println("rate limit error, failing open. key: ", key)
+					return next(c)
+				}
+				fmt.Println("rate limit error, failing closed. key: ", key)
 				c.String(http.StatusInternalServerError, "rate limit error")
 				return err
 			}

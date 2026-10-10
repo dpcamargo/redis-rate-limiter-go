@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/dpcamargo/fullcycle-rate-limiter/internal/database/redisdb"
+	"github.com/dpcamargo/redis-rate-limiter-go/internal/database/redisdb"
 	"github.com/go-redis/redis/v8"
 )
 
