@@ -1,28 +1,30 @@
 # High-Throughput Redis Rate Limiter in Go
 
-A rate limiter middleware for Go web services, backed by Redis. It throttles
-incoming HTTP requests by client IP or by an API token, with per-token
-override of the limit/window, and is designed so the storage backend
-(currently Redis) can be swapped out behind a small interface.
+## Purpose
 
-Built with [Echo](https://echo.labstack.com/) as the HTTP framework and
-[go-redis](https://github.com/redis/go-redis) as the Redis client.
-
-## Features
+A rate limiter middleware for Go web services, backed by Redis. It
+throttles incoming HTTP requests by client IP or by an API token, with
+per-token override of the limit/window, and is designed so the storage
+backend (currently Redis) can be swapped out behind a small interface.
 
 - Per-IP and per-token rate limiting, configured via environment variables.
 - Token-based limits take precedence over IP-based limits (e.g. IP capped at
   10 req/s, but a specific `API_KEY` can be configured for 100 req/s).
-- Storage is abstracted behind `database.DatabaseInterface`
-  (`internal/database/database.go`), so Redis can be replaced with another
-  store without touching the rate-limiting logic.
-- Rate-limiting logic (`internal/web/middleware/rate_limiter.go`) is fully
-  decoupled from the Echo middleware wiring, and is unit-tested with a mock
-  store (no network dependency).
 - Configurable fail-open / fail-closed behavior when Redis is unreachable
   (see "Tradeoff Analysis" below).
 - Returns HTTP 429 with a clear message when a limit is exceeded, HTTP 200
   otherwise.
+
+## Technologies
+
+- **Go** — application language
+- **[Echo](https://echo.labstack.com/)** — HTTP framework; the rate limiter
+  is wired in as middleware
+- **[go-redis](https://github.com/redis/go-redis)** — Redis client
+- **Redis** — stores the per-key request counters (fixed-window counter
+  algorithm, see Architecture below)
+- **Viper** — environment-variable / `.env` configuration
+- **Docker Compose** — orchestrates Redis + the rate-limited service
 
 ## Architecture
 
@@ -41,11 +43,15 @@ flowchart LR
     RateLimiter -->|Redis error, fail-open| Controller
 ```
 
-`DatabaseInterface` is the seam that lets the Redis implementation
-(`internal/database/redisdb`) be swapped for another store (e.g. in-memory,
-Memcached) without changing `RateLimiter` or the middleware.
+`DatabaseInterface` (`internal/database/database.go`) is the seam that lets
+the Redis implementation (`internal/database/redisdb`) be swapped for
+another store (e.g. in-memory, Memcached) without changing `RateLimiter` or
+the middleware. The rate-limiting logic itself
+(`internal/web/middleware/rate_limiter.go`) is fully decoupled from the
+Echo middleware wiring, and is unit-tested with a mock store — no network
+dependency.
 
-### Request sequence (fixed-window counter)
+## Execution flow
 
 ```mermaid
 sequenceDiagram
@@ -80,9 +86,21 @@ sequenceDiagram
     end
 ```
 
+1. Every request is keyed either by client IP or by the `API_KEY` header if
+   present (token-based limits override IP-based ones).
+2. The middleware asks Redis for that key's current count.
+3. If Redis is unreachable, the configured `FAIL_OPEN` setting decides
+   whether the request is allowed through unthrottled or rejected with 500
+   (see the fail-open/fail-closed tradeoff below).
+4. If the count is under the configured limit, it's incremented, the key's
+   TTL is (re)set to the configured window, and the request proceeds.
+5. If the count is at or over the limit, the key's TTL is refreshed (so the
+   block persists for a full window from the last rejected attempt) and the
+   request is rejected with 429.
+
 Each request costs one `GET` plus either one `INCR`+`EXPIRE` pair (allowed)
-or one `EXPIRE` (rejected) round-trip to Redis — this cost is the main driver
-of the throughput numbers below.
+or one `EXPIRE` (rejected) round-trip to Redis — this cost is the main
+driver of the throughput numbers in Metrics below.
 
 ## Configuration
 
@@ -119,7 +137,7 @@ Unit tests cover the rate-limit core logic (allow/deny decisions,
 expiration updates) and both the fail-open and fail-closed middleware paths,
 using a mocked store — no Redis dependency required.
 
-## Benchmarks and Tradeoff Analysis
+## Metrics
 
 Numbers below were measured locally (Apple M1, Docker via Colima VM) against
 the real Redis container from `docker-compose.yaml` — not synthetic or
